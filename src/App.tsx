@@ -24,6 +24,8 @@ export default function App() {
   const [showCompareTable, setShowCompareTable] = useState(false);
   const [detailComponent, setDetailComponent] = useState<Component | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [editComponent, setEditComponent] = useState<Component | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<Component | null>(null);
   const [showAddCategoryForm, setShowAddCategoryForm] = useState(false);
   const [showMobileSidebar, setShowMobileSidebar] = useState(false);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
@@ -81,6 +83,14 @@ export default function App() {
       if (prev.length >= MAX_COMPARE) return prev;
       return [...prev, component];
     });
+  }
+
+  async function handleDeleteConfirm() {
+    if (!deleteConfirm) return;
+    await supabase.from('components').delete().eq('id', deleteConfirm.id);
+    setDeleteConfirm(null);
+    if (detailComponent?.id === deleteConfirm.id) setDetailComponent(null);
+    fetchData();
   }
 
   const hasActiveFilters = !!(searchQuery || Object.entries(filters).some(([k, v]) =>
@@ -189,6 +199,8 @@ export default function App() {
             onBack={() => setDetailComponent(null)}
             onToggleCompare={toggleCompare}
             isSelected={!!compareList.find((c) => c.id === detailComponent.id)}
+            onEdit={(c) => setEditComponent(c)}
+            onDelete={(c) => setDeleteConfirm(c)}
           />
         </div>
       ) : (
@@ -374,6 +386,50 @@ export default function App() {
           onSuccess={() => { setShowAddForm(false); fetchData(); }}
           onCancel={() => setShowAddForm(false)}
         />
+      )}
+
+      {/* Edit form */}
+      {editComponent && (
+        <AddComponentForm
+          categories={categories}
+          editComponent={editComponent}
+          onSuccess={() => { setEditComponent(null); fetchData(); }}
+          onCancel={() => setEditComponent(null)}
+        />
+      )}
+
+      {/* Delete confirm */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl border border-gray-200 p-6 max-w-sm w-full mx-4 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 bg-red-50 rounded-xl">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-red-500"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900">Delete Component</h3>
+                <p className="text-xs text-gray-500 mt-0.5">This action cannot be undone</p>
+              </div>
+            </div>
+            <p className="text-sm text-gray-600 mb-5">
+              Are you sure you want to delete <span className="font-semibold text-gray-900">{deleteConfirm.name}</span>?
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setDeleteConfirm(null)}
+                className="px-4 py-2 text-xs font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteConfirm}
+                className="px-4 py-2 text-xs font-medium text-white bg-red-500 rounded-lg hover:bg-red-600 transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {showAddCategoryForm && (

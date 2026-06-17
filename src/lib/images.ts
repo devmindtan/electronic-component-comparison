@@ -111,14 +111,19 @@ export function getComponentImage(component: {
 
 export function getComponentGallery(component: {
   image_url: string;
+  specs?: Record<string, unknown>;
   categories?: { slug: string } | null;
 }): Array<{ src: string; label: string }> {
+  // Read saved gallery from specs._gallery
+  const saved = component.specs?._gallery;
+  if (Array.isArray(saved) && saved.length > 0) {
+    const entries = (saved as { label: string; src: string }[])
+      .filter((g) => g.src)
+      .map((g) => ({ src: resolveImageUrl(g.src), label: g.label }));
+    if (entries.length > 0) return entries;
+  }
+
+  // Fallback: just main image
   const main = getComponentImage(component);
-  const slug = component.categories?.slug ?? 'default';
-  const tech = CATEGORY_TECH_IMAGES[slug] ?? CATEGORY_TECH_IMAGES.default;
-
-  const labels = ['Top View', 'Pin Diagram', 'PCB Footprint', 'Application Circuit'];
-  const images = [main, ...tech].slice(0, 4);
-
-  return images.map((src, i) => ({ src, label: labels[i] ?? `Image ${i + 1}` }));
+  return [{ src: main, label: 'Component Image' }];
 }

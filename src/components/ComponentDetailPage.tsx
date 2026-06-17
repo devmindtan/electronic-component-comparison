@@ -1,7 +1,8 @@
 import {
   ChevronRight, GitCompare, CheckCircle, XCircle,
   Thermometer, Zap, Package, Ruler, Shield, FileText, BarChart3, Weight,
-  ExternalLink, Tag, ChevronLeft, ChevronRight as ChevronRightIcon, ZoomIn, X
+  ExternalLink, Tag, ChevronLeft, ChevronRight as ChevronRightIcon, ZoomIn, X,
+  Pencil, Trash2
 } from 'lucide-react';
 import { useState, useEffect, type ReactNode } from 'react';
 import type { Component } from '../lib/supabase';
@@ -16,6 +17,8 @@ interface Props {
   onBack: () => void;
   onToggleCompare: (c: Component) => void;
   isSelected: boolean;
+  onEdit?: (c: Component) => void;
+  onDelete?: (c: Component) => void;
 }
 
 /* ── Image gallery — large hero image + thumbnail strip + click-to-enlarge lightbox ── */
@@ -160,7 +163,7 @@ function SectionHeading({ icon, title, count }: { icon: ReactNode; title: string
   );
 }
 
-export function ComponentDetailPage({ component, onBack, onToggleCompare, isSelected }: Props) {
+export function ComponentDetailPage({ component, onBack, onToggleCompare, isSelected, onEdit, onDelete }: Props) {
   const category = component.categories;
   const IconComponent = category ? categoryIcons[category.icon] ?? categoryIcons['cpu'] : categoryIcons['cpu'];
 
@@ -233,6 +236,16 @@ export function ComponentDetailPage({ component, onBack, onToggleCompare, isSele
           <Button variant={isSelected ? 'default' : 'outline'} size="sm" onClick={() => onToggleCompare(component)}>
             <GitCompare size={13} /> {isSelected ? 'Remove' : 'Compare'}
           </Button>
+          {onEdit && (
+            <Button variant="outline" size="sm" onClick={() => onEdit(component)} className="text-blue-600 border-blue-200 hover:bg-blue-50">
+              <Pencil size={13} /> Edit
+            </Button>
+          )}
+          {onDelete && (
+            <Button variant="outline" size="sm" onClick={() => onDelete(component)} className="text-red-500 border-red-200 hover:bg-red-50">
+              <Trash2 size={13} /> Delete
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={onBack}>
             ← Back
           </Button>

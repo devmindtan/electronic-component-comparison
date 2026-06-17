@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
   ExternalLink, Tag, GitCompare, CheckCircle, XCircle,
   Thermometer, Zap, Package, Ruler, Shield, FileText, BarChart3, Info, Weight,
-  ChevronLeft, ChevronRight
+  ChevronLeft, ChevronRight, Pencil, Trash2
 } from 'lucide-react';
 import type { Component } from '../lib/supabase';
 import { categoryIcons, formatSpecKey, formatSpecValue } from '../lib/utils';
@@ -247,9 +247,11 @@ interface ComponentDetailModalProps {
   onClose: () => void;
   onToggleCompare: (c: Component) => void;
   isSelected: boolean;
+  onEdit?: (c: Component) => void;
+  onDelete?: (c: Component) => void;
 }
 
-export function ComponentDetailModal({ component, onClose, onToggleCompare, isSelected }: ComponentDetailModalProps) {
+export function ComponentDetailModal({ component, onClose, onToggleCompare, isSelected, onEdit, onDelete }: ComponentDetailModalProps) {
   if (!component) return null;
 
   const category = component.categories;
@@ -298,6 +300,20 @@ export function ComponentDetailModal({ component, onClose, onToggleCompare, isSe
               <Button variant={isSelected ? 'default' : 'outline'} size="sm" onClick={() => onToggleCompare(component)} className="transition-all duration-200 active:scale-95">
                 <GitCompare size={13} /> {isSelected ? 'Remove' : 'Compare'}
               </Button>
+              {onEdit && (
+                <Tooltip content="Edit component">
+                  <Button variant="outline" size="icon" onClick={() => onEdit(component)} className="h-8 w-8 text-blue-600 border-blue-200 hover:bg-blue-50">
+                    <Pencil size={13} />
+                  </Button>
+                </Tooltip>
+              )}
+              {onDelete && (
+                <Tooltip content="Delete component">
+                  <Button variant="outline" size="icon" onClick={() => onDelete(component)} className="h-8 w-8 text-red-500 border-red-200 hover:bg-red-50">
+                    <Trash2 size={13} />
+                  </Button>
+                </Tooltip>
+              )}
               <DialogCloseButton onClose={onClose} />
             </div>
           </div>

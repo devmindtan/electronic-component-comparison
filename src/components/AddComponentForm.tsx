@@ -14,7 +14,7 @@ import {
   Image as ImageIcon,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import type { Category } from '../lib/supabase';
+import type { Category, Component } from '../lib/supabase';
 import { Input } from './ui/Input';
 import { Select } from './ui/Select';
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogCloseButton } from './ui/Dialog';
@@ -22,6 +22,7 @@ import { cn } from '../lib/cn';
 
 interface AddComponentFormProps {
   categories: Category[];
+  editComponent?: Component;
   onSuccess: () => void;
   onCancel: () => void;
 }
@@ -33,36 +34,99 @@ const STEPS = [
   { label: 'Resources', icon: Link2 },
 ];
 
-export function AddComponentForm({ categories, onSuccess, onCancel }: AddComponentFormProps) {
+export function AddComponentForm({ categories, editComponent, onSuccess, onCancel }: AddComponentFormProps) {
+  const isEdit = !!editComponent;
   const [step, setStep] = useState(0);
   const [visited, setVisited] = useState<Set<number>>(new Set([0]));
 
   // Step 1: Basic
-  const [name, setName] = useState('');
-  const [partNumber, setPartNumber] = useState('');
-  const [series, setSeries] = useState('');
-  const [manufacturer, setManufacturer] = useState('');
-  const [categoryId, setCategoryId] = useState('');
-  const [description, setDescription] = useState('');
+  const [name, setName] = useState(editComponent?.name ?? '');
+  const [partNumber, setPartNumber] = useState(editComponent?.part_number ?? '');
+  const [series, setSeries] = useState(editComponent?.series ?? '');
+  const [manufacturer, setManufacturer] = useState(editComponent?.manufacturer ?? '');
+  const [categoryId, setCategoryId] = useState(editComponent?.category_id ?? '');
+  const [description, setDescription] = useState(editComponent?.description ?? '');
 
   // Step 2: Physical
-  const [packageType, setPackageType] = useState('');
-  const [dimensionsMm, setDimensionsMm] = useState('');
-  const [weightG, setWeightG] = useState('');
-  const [tempMin, setTempMin] = useState('');
-  const [tempMax, setTempMax] = useState('');
-  const [voltMin, setVoltMin] = useState('');
-  const [voltMax, setVoltMax] = useState('');
-  const [rohsCompliant, setRohsCompliant] = useState(true);
+  const [packageType, setPackageType] = useState(editComponent?.package_type ?? '');
+  const [dimensionsMm, setDimensionsMm] = useState(editComponent?.dimensions_mm ?? '');
+  const [weightG, setWeightG] = useState(editComponent?.weight_g?.toString() ?? '');
+  const [tempMin, setTempMin] = useState(editComponent?.operating_temp_min?.toString() ?? '');
+  const [tempMax, setTempMax] = useState(editComponent?.operating_temp_max?.toString() ?? '');
+  const [voltMin, setVoltMin] = useState(editComponent?.voltage_min?.toString() ?? '');
+  const [voltMax, setVoltMax] = useState(editComponent?.voltage_max?.toString() ?? '');
+  const [rohsCompliant, setRohsCompliant] = useState(editComponent?.rohs_compliant ?? true);
 
   // Step 3: Specs JSON
-  const [specsText, setSpecsText] = useState('{\n  \n}');
+  const [specsText, setSpecsText] = useState(
+    editComponent?.specs && Object.keys(editComponent.specs).length > 0
+      ? JSON.stringify(editComponent.specs, null, 2)
+      : '{\n  \n}'
+  );
 
   // Step 4: Resources
-  const [tagsInput, setTagsInput] = useState('');
-  const [datasheetUrl, setDatasheetUrl] = useState('');
-  const [imageUrl, setImageUrl] = useState('');
+  const [tagsInput, setTagsInput] = useState(editComponent?.tags?.join(', ') ?? '');
+  const [datasheetUrl, setDatasheetUrl] = useState(editComponent?.datasheet_url ?? '');
+  const [imageUrl, setImageUrl] = useState(editComponent?.image_url ?? '');
   const [uploadingImage, setUploadingImage] = useState(false);
+
+  // Gallery images: array of {label, src, uploading}
+  type GalleryEntry = { label: string; src: string; uploading: boolean };
+
+  // Default image roles per category slug
+  const CATEGORY_ROLES: Record<string, string[]> = {
+    microcontroller:    ['Top View', 'Pin Diagram', 'PCB Footprint', 'Application Circuit'],
+    sbc:                ['Board Overview', 'GPIO Pinout', 'Connector Layout', 'Application Setup'],
+    transistor:         ['Package View', 'Pinout', 'I-V Characteristic Curve', 'Circuit Symbol'],
+    sensor:             ['Top View', 'Wiring Diagram', 'Output Chart', 'Application Circuit'],
+    'op-amp':           ['Package View', 'Pinout', 'Transfer Curve', 'Typical Application'],
+    'power-regulator':  ['Package View', 'Pinout', 'Efficiency Curve', 'Application Circuit'],
+    communication:      ['Module View', 'Antenna Layout', 'Block Diagram', 'Wiring Example'],
+    display:            ['Front View', 'Connector Pinout', 'Pixel Layout', 'Wiring Example'],
+    default:            ['Top View', 'Pin Diagram', 'Schematic Symbol', 'Application Circuit'],
+  };
+
+  function getRolesForCategory(catId: string): string[] {
+    const cat = categories.find((c) => c.id === catId);
+    const slug = cat?.slug ?? 'default';
+    return CATEGORY_ROLES[slug] ?? CATEGORY_ROLES.default;
+  }
+
+  function buildGallery(roles: string[], saved?: { label: string; src: string }[]): GalleryEntry[] {
+    return roles.map((label) => {
+      const found = saved?.find((g) => g.label === label);
+      return { label, src: found?.src ?? '', uploading: false };
+    });
+  }
+
+  function initGallery(): GalleryEntry[] {
+    const saved = (editComponent?.specs as Record<string, unknown>)?._gallery;
+    if (Array.isArray(saved) && saved.length > 0) {
+      // Edit mode: restore exactly what was saved (labels + srcs)
+      return (saved as { label: string; src: string }[]).map((g) => ({
+        label: g.label,
+        src: g.src,
+        uploading: false,
+      }));
+    }
+    return buildGallery(getRolesForCategory(editComponent?.category_id ?? ''));
+  }
+
+  const [gallery, setGallery] = useState<GalleryEntry[]>(initGallery);
+
+  // When category changes, update gallery labels (keep existing srcs by position)
+  const prevCategoryRef = React.useRef(categoryId);
+  React.useEffect(() => {
+    if (prevCategoryRef.current === categoryId) return;
+    prevCategoryRef.current = categoryId;
+    const newRoles = getRolesForCategory(categoryId);
+    setGallery((prev) => newRoles.map((label, i) => ({
+      label,
+      src: prev[i]?.src ?? '',
+      uploading: false,
+    })));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categoryId]);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -155,6 +219,36 @@ export function AddComponentForm({ categories, onSuccess, onCancel }: AddCompone
     }
   }
 
+  async function handleUploadGalleryImage(index: number, file: File) {
+    if (!file.type.startsWith('image/')) {
+      setError('Please select an image file.');
+      return;
+    }
+    setError('');
+    setGallery((prev) => prev.map((g, i) => i === index ? { ...g, uploading: true } : g));
+    try {
+      if (!minioBaseUrl || !minioBucket) throw new Error('Missing VITE_MINIO_URL or VITE_MINIO_BUCKET in .env');
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const objectKey = `components/${Date.now()}-${safeName}`;
+      const uploadUrl = `${minioBaseUrl}/${minioBucket}/${objectKey}`;
+      const res = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': file.type || 'application/octet-stream' },
+        body: file,
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Upload failed (${res.status}). ${text || 'Check bucket policy/CORS.'}`);
+      }
+      setGallery((prev) => prev.map((g, i) => i === index ? { ...g, src: objectKey, uploading: false } : g));
+      // Auto-set main image if not yet set
+      if (!imageUrl) setImageUrl(objectKey);
+    } catch (err) {
+      setGallery((prev) => prev.map((g, i) => i === index ? { ...g, uploading: false } : g));
+      setError(err instanceof Error ? err.message : 'Upload failed.');
+    }
+  }
+
   async function handleSubmit() {
     if (!validateStep(step)) return;
     let specs: Record<string, unknown> = {};
@@ -163,16 +257,19 @@ export function AddComponentForm({ categories, onSuccess, onCancel }: AddCompone
       return;
     }
     setLoading(true);
-    const { error: dbError } = await supabase.from('components').insert({
+    const payload = {
       name: name.trim(),
       series: series.trim(),
       manufacturer: manufacturer.trim(),
       category_id: categoryId || null,
       description: description.trim(),
       datasheet_url: datasheetUrl.trim(),
-      image_url: imageUrl.trim(),
+      image_url: imageUrl.trim() || gallery.find((g) => g.src)?.src || '',
       tags: tagsInput.split(',').map((t) => t.trim()).filter(Boolean),
-      specs,
+      specs: {
+        ...specs,
+        _gallery: gallery.filter((g) => g.src).map(({ label, src }) => ({ label, src })),
+      },
       part_number: partNumber.trim() || name.trim(),
       package_type: packageType.trim() || null,
       dimensions_mm: dimensionsMm.trim() || null,
@@ -182,7 +279,10 @@ export function AddComponentForm({ categories, onSuccess, onCancel }: AddCompone
       voltage_min: voltMin ? parseFloat(voltMin) : null,
       voltage_max: voltMax ? parseFloat(voltMax) : null,
       rohs_compliant: rohsCompliant,
-    });
+    };
+    const { error: dbError } = isEdit
+      ? await supabase.from('components').update(payload).eq('id', editComponent!.id)
+      : await supabase.from('components').insert(payload);
     setLoading(false);
     if (dbError) setError(dbError.message);
     else onSuccess();
@@ -201,9 +301,9 @@ export function AddComponentForm({ categories, onSuccess, onCancel }: AddCompone
             </div>
             <div>
               <DialogTitle className="text-sm font-medium text-gray-900">
-                Add New Component
+                {isEdit ? 'Edit Component' : 'Add New Component'}
               </DialogTitle>
-              <p className="text-xs text-gray-400 mt-0.5">Fill in the details to add to inventory</p>
+              <p className="text-xs text-gray-400 mt-0.5">{isEdit ? 'Update component details' : 'Fill in the details to add to inventory'}</p>
             </div>
           </div>
           <DialogCloseButton onClose={onCancel} />
@@ -480,40 +580,97 @@ export function AddComponentForm({ categories, onSuccess, onCancel }: AddCompone
                       type="url"
                     />
                   </div>
-                  <div>
-                    <FieldLabel>Image URL / Object Key</FieldLabel>
-                    <div className="space-y-2">
-                      <Input
-                        value={imageUrl}
-                        onChange={(e) => setImageUrl(e.target.value)}
-                        placeholder="products/esp32/main.jpg or https://..."
-                        type="text"
-                      />
-
-                      <label className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-700 cursor-pointer hover:bg-gray-50 transition-colors">
-                        <Upload size={13} className="text-stone-600" />
-                        {uploadingImage ? 'Uploading image...' : 'Upload image from computer'}
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          disabled={uploadingImage || loading}
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (file) {
-                              void handleUploadImage(file);
-                            }
-                            e.currentTarget.value = '';
-                          }}
-                        />
-                      </label>
-
-                      {imageUrl && (
-                        <div className="flex items-center gap-1.5 text-[11px] text-gray-500">
-                          <ImageIcon size={12} className="text-stone-600" />
-                          Current image key: <span className="font-mono text-gray-700 truncate">{imageUrl}</span>
-                        </div>
+                  <div className="sm:col-span-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <FieldLabel>Component Images</FieldLabel>
+                      {categoryId && (
+                        <span className="text-[10px] text-stone-500 bg-stone-50 border border-stone-200 rounded px-1.5 py-0.5">
+                          Labels auto-set by category
+                        </span>
                       )}
+                    </div>
+                    <div className="space-y-2">
+                      {gallery.map((entry, idx) => (
+                        <div key={idx} className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+                          {/* Thumbnail */}
+                          <div className="w-10 h-10 rounded-md border border-gray-200 overflow-hidden bg-white shrink-0 flex items-center justify-center">
+                            {entry.src ? (
+                              <img
+                                src={
+                                  entry.src.startsWith('http')
+                                    ? entry.src
+                                    : `${String(import.meta.env.VITE_MINIO_URL ?? '').replace(/\/$/, '')}/${String(import.meta.env.VITE_MINIO_BUCKET ?? 'eletronic-component').trim()}/${entry.src}`
+                                }
+                                alt={entry.label}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <ImageIcon size={14} className="text-gray-300" />
+                            )}
+                          </div>
+
+                          {/* Label (editable) + src input */}
+                          <div className="flex-1 min-w-0 space-y-1">
+                            <input
+                              value={entry.label}
+                              onChange={(e) => setGallery((prev) => prev.map((g, i) => i === idx ? { ...g, label: e.target.value } : g))}
+                              placeholder="Image role name..."
+                              className="w-full text-[10px] font-medium text-stone-600 bg-transparent border-b border-dashed border-gray-300 focus:border-stone-400 focus:outline-none pb-0.5 placeholder:text-gray-300"
+                            />
+                            <Input
+                              value={entry.src}
+                              onChange={(e) => setGallery((prev) => prev.map((g, i) => i === idx ? { ...g, src: e.target.value } : g))}
+                              placeholder="URL or object key..."
+                              className="h-7 text-[11px]"
+                            />
+                          </div>
+
+                          {/* Upload button */}
+                          <label className={cn(
+                            'shrink-0 inline-flex items-center gap-1 rounded-md border px-2 py-1.5 text-[10px] cursor-pointer transition-colors',
+                            entry.uploading
+                              ? 'border-gray-200 text-gray-400 bg-gray-50 cursor-not-allowed'
+                              : 'border-gray-200 text-gray-600 bg-white hover:bg-gray-50'
+                          )}>
+                            <Upload size={11} />
+                            {entry.uploading ? 'Uploading…' : 'Upload'}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              disabled={entry.uploading || loading}
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) void handleUploadGalleryImage(idx, file);
+                                e.currentTarget.value = '';
+                              }}
+                            />
+                          </label>
+
+                          {/* Remove slot button */}
+                          <button
+                            type="button"
+                            onClick={() => setGallery((prev) => prev.filter((_, i) => i !== idx))}
+                            className="shrink-0 p-1 rounded text-gray-300 hover:text-red-400 hover:bg-red-50 transition-colors"
+                            title="Remove this image slot"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+                      ))}
+
+                      {/* Add slot button */}
+                      <button
+                        type="button"
+                        onClick={() => setGallery((prev) => [...prev, { label: '', src: '', uploading: false }])}
+                        className="w-full flex items-center justify-center gap-1.5 border border-dashed border-gray-300 rounded-lg py-2 text-[11px] text-gray-400 hover:text-stone-600 hover:border-stone-400 hover:bg-stone-50 transition-colors"
+                      >
+                        <span className="text-base leading-none">+</span> Add image slot
+                      </button>
+
+                      <p className="text-[10px] text-gray-400 pl-1">
+                        Click the label name to rename it. First image with a src becomes the main image.
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -583,7 +740,7 @@ export function AddComponentForm({ categories, onSuccess, onCancel }: AddCompone
               {loading ? (
                 'Saving...'
               ) : isLastStep ? (
-                <><Check size={13} /> Save Component</>
+                <><Check size={13} /> {isEdit ? 'Update Component' : 'Save Component'}</>
               ) : (
                 <>Next <ChevronRight size={13} /></>
               )}
