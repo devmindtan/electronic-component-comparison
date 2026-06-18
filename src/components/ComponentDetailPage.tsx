@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { useState, useEffect, type ReactNode } from 'react';
 import type { Component } from '../lib/supabase';
-import { categoryIcons, formatSpecKey, formatSpecValue } from '../lib/utils';
+import { categoryIcons, formatSpecKey, formatSpecValue, getDisplaySpecs } from '../lib/utils';
 import { getComponentGallery } from '../lib/images';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
@@ -181,8 +181,9 @@ export function ComponentDetailPage({ component, onBack, onToggleCompare, isSele
     { label: 'RoHS Status',    value: component.rohs_compliant ? 'Compliant' : 'Non-compliant',        icon: <Shield size={16} />,      accent: component.rohs_compliant ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-500' },
   ].filter((s) => s.value);
 
-  const hasSpecs = Object.keys(component.specs).length > 0;
-  const quickSpecs = Object.entries(component.specs).slice(0, 4);
+  const displaySpecs = getDisplaySpecs(component.specs);
+  const hasSpecs = displaySpecs.length > 0;
+  const quickSpecs = displaySpecs.slice(0, 4);
 
   const highlightChips = [
     tempRange ? { icon: <Thermometer size={11} />, label: tempRange } : null,
@@ -322,9 +323,9 @@ export function ComponentDetailPage({ component, onBack, onToggleCompare, isSele
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8 items-stretch">
           {hasSpecs && (
             <section className="bg-white border border-gray-200 shadow-sm rounded-2xl p-5 sm:p-6 h-full">
-              <SectionHeading icon={<BarChart3 size={14} />} title="Specifications" count={Object.keys(component.specs).length} />
+              <SectionHeading icon={<BarChart3 size={14} />} title="Specifications" count={displaySpecs.length} />
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                {Object.entries(component.specs).map(([k, v]) => (
+                {displaySpecs.map(([k, v]) => (
                   <div
                     key={k}
                     className="flex items-center justify-between gap-3 bg-gray-50 border border-gray-100 rounded-xl px-3.5 py-3 hover:border-gray-200 hover:bg-white transition-colors"

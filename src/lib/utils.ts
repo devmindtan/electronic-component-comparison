@@ -72,6 +72,17 @@ export function formatSpecValue(value: unknown): string {
   return String(value);
 }
 
+/**
+ * Keys starting with `_` (e.g. `_gallery`, used internally to store the
+ * component image gallery inside `specs`) are reserved/internal and must
+ * never be shown to the user as if they were a normal technical spec.
+ * Every place that lists `component.specs` for display should go through
+ * this helper instead of calling `Object.entries`/`Object.keys` directly.
+ */
+export function getDisplaySpecs(specs: Record<string, unknown>): [string, unknown][] {
+  return Object.entries(specs).filter(([key]) => !key.startsWith('_'));
+}
+
 export function getSpecDiff(specs: Record<string, unknown>[], key: string): 'same' | 'diff' | 'na' {
   const values = specs.map((s) => s[key]);
   const defined = values.filter((v) => v !== undefined && v !== null);
@@ -81,6 +92,6 @@ export function getSpecDiff(specs: Record<string, unknown>[], key: string): 'sam
 
 export function getAllSpecKeys(specs: Record<string, unknown>[]): string[] {
   const keys = new Set<string>();
-  specs.forEach((s) => Object.keys(s).forEach((k) => keys.add(k)));
+  specs.forEach((s) => Object.keys(s).forEach((k) => { if (!k.startsWith('_')) keys.add(k); }));
   return Array.from(keys);
 }

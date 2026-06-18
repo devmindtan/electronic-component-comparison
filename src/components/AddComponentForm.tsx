@@ -15,6 +15,8 @@ import {
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { Category, Component } from '../lib/supabase';
+import { resolveImageUrl } from '../lib/images';
+import { getDisplaySpecs } from '../lib/utils';
 import { Input } from './ui/Input';
 import { Select } from './ui/Select';
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogCloseButton } from './ui/Dialog';
@@ -58,9 +60,14 @@ export function AddComponentForm({ categories, editComponent, onSuccess, onCance
   const [rohsCompliant, setRohsCompliant] = useState(editComponent?.rohs_compliant ?? true);
 
   // Step 3: Specs JSON
+  // Internal keys (e.g. `_gallery`) are stripped from the editable view —
+  // they're managed by the gallery UI in Resources and get re-applied on
+  // save regardless of what's typed here, so showing them would just be
+  // confusing/risky for users hand-editing this JSON.
+  const initialUserSpecs = editComponent?.specs ? getDisplaySpecs(editComponent.specs) : [];
   const [specsText, setSpecsText] = useState(
-    editComponent?.specs && Object.keys(editComponent.specs).length > 0
-      ? JSON.stringify(editComponent.specs, null, 2)
+    initialUserSpecs.length > 0
+      ? JSON.stringify(Object.fromEntries(initialUserSpecs), null, 2)
       : '{\n  \n}'
   );
 
@@ -68,10 +75,19 @@ export function AddComponentForm({ categories, editComponent, onSuccess, onCance
   const [tagsInput, setTagsInput] = useState(editComponent?.tags?.join(', ') ?? '');
   const [datasheetUrl, setDatasheetUrl] = useState(editComponent?.datasheet_url ?? '');
   const [imageUrl, setImageUrl] = useState(editComponent?.image_url ?? '');
-  const [uploadingImage, setUploadingImage] = useState(false);
 
-  // Gallery images: array of {label, src, uploading}
-  type GalleryEntry = { label: string; src: string; uploading: boolean };
+  // Gallery images: array of {label, src, uploading, pendingFile, previewUrl}.
+  // `pendingFile`/`previewUrl` hold a locally-selected image that has NOT been
+  // uploaded to MinIO yet — the actual upload only happens inside handleSubmit,
+  // at the same time the metadata is saved, so a half-finished form never
+  // leaves an orphaned file sitting in the bucket.
+  type GalleryEntry = {
+    label: string;
+    src: string;
+    uploading: boolean;
+    pendingFile?: File;
+    previewUrl?: string;
+  };
 
   // Default image roles per category slug
   const CATEGORY_ROLES: Record<string, string[]> = {
@@ -100,9 +116,14 @@ export function AddComponentForm({ categories, editComponent, onSuccess, onCance
   }
 
   function initGallery(): GalleryEntry[] {
-    const saved = (editComponent?.specs as Record<string, unknown>)?._gallery;
+    // Parse specs safely — Supabase may return a JSON string instead of an object
+    let specs = editComponent?.specs as Record<string, unknown> | string | undefined;
+    if (typeof specs === 'string') {
+      try { specs = JSON.parse(specs) as Record<string, unknown>; } catch { specs = undefined; }
+    }
+
+    const saved = (specs as Record<string, unknown> | undefined)?._gallery;
     if (Array.isArray(saved) && saved.length > 0) {
-      // Edit mode: restore exactly what was saved (labels + srcs)
       return (saved as { label: string; src: string }[]).map((g) => ({
         label: g.label,
         src: g.src,
@@ -114,7 +135,7 @@ export function AddComponentForm({ categories, editComponent, onSuccess, onCance
 
   const [gallery, setGallery] = useState<GalleryEntry[]>(initGallery);
 
-  // When category changes, update gallery labels (keep existing srcs by position)
+  // When category changes, update gallery labels (keep existing srcs/pending files by position)
   const prevCategoryRef = React.useRef(categoryId);
   React.useEffect(() => {
     if (prevCategoryRef.current === categoryId) return;
@@ -124,9 +145,24 @@ export function AddComponentForm({ categories, editComponent, onSuccess, onCance
       label,
       src: prev[i]?.src ?? '',
       uploading: false,
+      pendingFile: prev[i]?.pendingFile,
+      previewUrl: prev[i]?.previewUrl,
     })));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [categoryId]);
+
+  // Revoke any local blob preview URLs when the form unmounts (cancelled or saved),
+  // so we don't leak memory from images that were staged but never uploaded.
+  const galleryRef = React.useRef(gallery);
+  galleryRef.current = gallery;
+  React.useEffect(() => {
+    return () => {
+      galleryRef.current.forEach((g) => {
+        if (g.previewUrl) URL.revokeObjectURL(g.previewUrl);
+      });
+    };
+  }, []);
+
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -178,75 +214,39 @@ export function AddComponentForm({ categories, editComponent, onSuccess, onCance
     }
   }
 
-  async function handleUploadImage(file: File) {
-    if (!file) return;
-
+  /** Stage a file locally (object URL preview) — nothing is sent to MinIO yet. */
+  function handleSelectGalleryImage(index: number, file: File) {
     if (!file.type.startsWith('image/')) {
       setError('Please select an image file.');
       return;
     }
-
     setError('');
-    setUploadingImage(true);
-
-    try {
-      if (!minioBaseUrl || !minioBucket) {
-        throw new Error('Missing VITE_MINIO_URL or VITE_MINIO_BUCKET in .env');
-      }
-
-      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-      const objectKey = `components/${Date.now()}-${safeName}`;
-      const uploadUrl = `${minioBaseUrl}/${minioBucket}/${objectKey}`;
-
-      const res = await fetch(uploadUrl, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': file.type || 'application/octet-stream',
-        },
-        body: file,
-      });
-
-      if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        throw new Error(`Upload failed (${res.status}). ${text || 'Check bucket policy/CORS for public PUT.'}`);
-      }
-
-      setImageUrl(objectKey);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload image failed.');
-    } finally {
-      setUploadingImage(false);
-    }
+    const previewUrl = URL.createObjectURL(file);
+    setGallery((prev) => prev.map((g, i) => {
+      if (i !== index) return g;
+      if (g.previewUrl) URL.revokeObjectURL(g.previewUrl);
+      return { ...g, pendingFile: file, previewUrl };
+    }));
   }
 
-  async function handleUploadGalleryImage(index: number, file: File) {
-    if (!file.type.startsWith('image/')) {
-      setError('Please select an image file.');
-      return;
+  /** Actual MinIO PUT — only called from handleSubmit, at save time. */
+  async function uploadFileToMinio(file: File): Promise<string> {
+    if (!minioBaseUrl || !minioBucket) {
+      throw new Error('Missing VITE_MINIO_URL or VITE_MINIO_BUCKET in .env');
     }
-    setError('');
-    setGallery((prev) => prev.map((g, i) => i === index ? { ...g, uploading: true } : g));
-    try {
-      if (!minioBaseUrl || !minioBucket) throw new Error('Missing VITE_MINIO_URL or VITE_MINIO_BUCKET in .env');
-      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-      const objectKey = `components/${Date.now()}-${safeName}`;
-      const uploadUrl = `${minioBaseUrl}/${minioBucket}/${objectKey}`;
-      const res = await fetch(uploadUrl, {
-        method: 'PUT',
-        headers: { 'Content-Type': file.type || 'application/octet-stream' },
-        body: file,
-      });
-      if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        throw new Error(`Upload failed (${res.status}). ${text || 'Check bucket policy/CORS.'}`);
-      }
-      setGallery((prev) => prev.map((g, i) => i === index ? { ...g, src: objectKey, uploading: false } : g));
-      // Auto-set main image if not yet set
-      if (!imageUrl) setImageUrl(objectKey);
-    } catch (err) {
-      setGallery((prev) => prev.map((g, i) => i === index ? { ...g, uploading: false } : g));
-      setError(err instanceof Error ? err.message : 'Upload failed.');
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const objectKey = `components/${Date.now()}-${safeName}`;
+    const uploadUrl = `${minioBaseUrl}/${minioBucket}/${objectKey}`;
+    const res = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': file.type || 'application/octet-stream' },
+      body: file,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Upload failed (${res.status}). ${text || 'Check bucket policy/CORS.'}`);
     }
+    return objectKey;
   }
 
   async function handleSubmit() {
@@ -256,7 +256,38 @@ export function AddComponentForm({ categories, editComponent, onSuccess, onCance
       setError('Invalid specs JSON format.');
       return;
     }
+
+    setError('');
     setLoading(true);
+
+    // 1) Upload every staged (not-yet-uploaded) image to MinIO first.
+    //    If any upload fails, abort before touching the database — we never
+    //    want metadata saved that points at an image that doesn't exist.
+    let workingGallery = gallery;
+    const hasPending = gallery.some((g) => g.pendingFile);
+    if (hasPending) {
+      setGallery((prev) => prev.map((g) => g.pendingFile ? { ...g, uploading: true } : g));
+      try {
+        workingGallery = await Promise.all(
+          gallery.map(async (g) => {
+            if (!g.pendingFile) return g;
+            const objectKey = await uploadFileToMinio(g.pendingFile);
+            return { ...g, src: objectKey, pendingFile: undefined, uploading: false };
+          })
+        );
+      } catch (err) {
+        setGallery((prev) => prev.map((g) => g.pendingFile ? { ...g, uploading: false } : g));
+        setError(err instanceof Error ? err.message : 'Upload image failed.');
+        setLoading(false);
+        return;
+      }
+      // Uploads succeeded — release the local previews and sync state with the real keys.
+      gallery.forEach((g) => { if (g.previewUrl) URL.revokeObjectURL(g.previewUrl); });
+      setGallery(workingGallery.map((g) => ({ ...g, previewUrl: undefined })));
+    }
+
+    // 2) Now save metadata + final image references together in one write.
+    const resolvedImageUrl = imageUrl.trim() || workingGallery.find((g) => g.src)?.src || '';
     const payload = {
       name: name.trim(),
       series: series.trim(),
@@ -264,11 +295,11 @@ export function AddComponentForm({ categories, editComponent, onSuccess, onCance
       category_id: categoryId || null,
       description: description.trim(),
       datasheet_url: datasheetUrl.trim(),
-      image_url: imageUrl.trim() || gallery.find((g) => g.src)?.src || '',
+      image_url: resolvedImageUrl,
       tags: tagsInput.split(',').map((t) => t.trim()).filter(Boolean),
       specs: {
         ...specs,
-        _gallery: gallery.filter((g) => g.src).map(({ label, src }) => ({ label, src })),
+        _gallery: workingGallery.filter((g) => g.src).map(({ label, src }) => ({ label, src })),
       },
       part_number: partNumber.trim() || name.trim(),
       package_type: packageType.trim() || null,
@@ -415,7 +446,7 @@ export function AddComponentForm({ categories, editComponent, onSuccess, onCance
                       onChange={(e) => setDescription(e.target.value)}
                       placeholder="Brief description of functions, features, or applications..."
                       rows={2}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-stone-100 focus:border-stone-400 resize-none placeholder:text-gray-400"
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-stone-100 focus:border-stone-400 resize-none placeholder:text-gray-400"
                     />
                   </div>
                 </div>
@@ -590,17 +621,16 @@ export function AddComponentForm({ categories, editComponent, onSuccess, onCance
                       )}
                     </div>
                     <div className="space-y-2">
-                      {gallery.map((entry, idx) => (
+                      {gallery.map((entry, idx) => {
+                        const hasPending = !!entry.pendingFile;
+                        const thumbSrc = entry.previewUrl || (entry.src ? resolveImageUrl(entry.src) : '');
+                        return (
                         <div key={idx} className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
                           {/* Thumbnail */}
                           <div className="w-10 h-10 rounded-md border border-gray-200 overflow-hidden bg-white shrink-0 flex items-center justify-center">
-                            {entry.src ? (
+                            {thumbSrc ? (
                               <img
-                                src={
-                                  entry.src.startsWith('http')
-                                    ? entry.src
-                                    : `${String(import.meta.env.VITE_MINIO_URL ?? '').replace(/\/$/, '')}/${String(import.meta.env.VITE_MINIO_BUCKET ?? 'eletronic-component').trim()}/${entry.src}`
-                                }
+                                src={thumbSrc}
                                 alt={entry.label}
                                 className="w-full h-full object-cover"
                               />
@@ -617,12 +647,18 @@ export function AddComponentForm({ categories, editComponent, onSuccess, onCance
                               placeholder="Image role name..."
                               className="w-full text-[10px] font-medium text-stone-600 bg-transparent border-b border-dashed border-gray-300 focus:border-stone-400 focus:outline-none pb-0.5 placeholder:text-gray-300"
                             />
-                            <Input
-                              value={entry.src}
-                              onChange={(e) => setGallery((prev) => prev.map((g, i) => i === idx ? { ...g, src: e.target.value } : g))}
-                              placeholder="URL or object key..."
-                              className="h-7 text-[11px]"
-                            />
+                            {hasPending ? (
+                              <p className="text-[10px] text-amber-600 h-7 flex items-center truncate">
+                                {entry.uploading ? 'Uploading…' : `Staged: ${entry.pendingFile!.name} (uploads on save)`}
+                              </p>
+                            ) : (
+                              <Input
+                                value={entry.src}
+                                onChange={(e) => setGallery((prev) => prev.map((g, i) => i === idx ? { ...g, src: e.target.value } : g))}
+                                placeholder="URL or object key..."
+                                className="h-7 text-[11px]"
+                              />
+                            )}
                           </div>
 
                           {/* Upload button */}
@@ -633,7 +669,7 @@ export function AddComponentForm({ categories, editComponent, onSuccess, onCance
                               : 'border-gray-200 text-gray-600 bg-white hover:bg-gray-50'
                           )}>
                             <Upload size={11} />
-                            {entry.uploading ? 'Uploading…' : 'Upload'}
+                            {entry.uploading ? 'Uploading…' : hasPending ? 'Replace' : 'Upload'}
                             <input
                               type="file"
                               accept="image/*"
@@ -641,7 +677,7 @@ export function AddComponentForm({ categories, editComponent, onSuccess, onCance
                               disabled={entry.uploading || loading}
                               onChange={(e) => {
                                 const file = e.target.files?.[0];
-                                if (file) void handleUploadGalleryImage(idx, file);
+                                if (file) handleSelectGalleryImage(idx, file);
                                 e.currentTarget.value = '';
                               }}
                             />
@@ -650,14 +686,19 @@ export function AddComponentForm({ categories, editComponent, onSuccess, onCance
                           {/* Remove slot button */}
                           <button
                             type="button"
-                            onClick={() => setGallery((prev) => prev.filter((_, i) => i !== idx))}
+                            onClick={() => setGallery((prev) => {
+                              const target = prev[idx];
+                              if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+                              return prev.filter((_, i) => i !== idx);
+                            })}
                             className="shrink-0 p-1 rounded text-gray-300 hover:text-red-400 hover:bg-red-50 transition-colors"
                             title="Remove this image slot"
                           >
                             <X size={12} />
                           </button>
                         </div>
-                      ))}
+                        );
+                      })}
 
                       {/* Add slot button */}
                       <button
@@ -669,7 +710,7 @@ export function AddComponentForm({ categories, editComponent, onSuccess, onCance
                       </button>
 
                       <p className="text-[10px] text-gray-400 pl-1">
-                        Click the label name to rename it. First image with a src becomes the main image.
+                        Click the label name to rename it. Images are kept locally and only uploaded to storage when you save. First image with a src becomes the main image.
                       </p>
                     </div>
                   </div>
@@ -738,7 +779,7 @@ export function AddComponentForm({ categories, editComponent, onSuccess, onCance
               className="inline-flex items-center gap-1.5 bg-gray-900 text-white text-xs font-medium rounded-lg px-4 py-2 hover:bg-gray-800 transition-colors disabled:opacity-60"
             >
               {loading ? (
-                'Saving...'
+                gallery.some((g) => g.uploading) ? 'Uploading images...' : 'Saving...'
               ) : isLastStep ? (
                 <><Check size={13} /> {isEdit ? 'Update Component' : 'Save Component'}</>
               ) : (

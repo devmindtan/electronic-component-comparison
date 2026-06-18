@@ -81,7 +81,7 @@ function toMinioPublicUrl(imagePath: string): string {
   return `${minioEndpoint}/${minioBucket}/${cleanPath}`;
 }
 
-function resolveImageUrl(imageValue: string): string {
+export function resolveImageUrl(imageValue: string): string {
   const value = imageValue.trim();
   if (!value) return '';
 

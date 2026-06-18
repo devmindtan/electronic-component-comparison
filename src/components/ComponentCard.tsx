@@ -5,7 +5,7 @@ import {
   ChevronLeft, ChevronRight, Pencil, Trash2
 } from 'lucide-react';
 import type { Component } from '../lib/supabase';
-import { categoryIcons, formatSpecKey, formatSpecValue } from '../lib/utils';
+import { categoryIcons, formatSpecKey, formatSpecValue, getDisplaySpecs } from '../lib/utils';
 import { getComponentImage, getComponentGallery } from '../lib/images';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
@@ -27,7 +27,8 @@ export function ComponentCard({ component, isSelected, viewMode, onToggleCompare
   const category = component.categories;
   const IconComponent = category ? categoryIcons[category.icon] ?? categoryIcons['cpu'] : categoryIcons['cpu'];
   const imgSrc = getComponentImage(component);
-  const topSpecs = Object.entries(component.specs).slice(0, 3);
+  const displaySpecs = getDisplaySpecs(component.specs);
+  const topSpecs = displaySpecs.slice(0, 3);
 
   if (viewMode === 'list') {
     return (
@@ -366,11 +367,11 @@ export function ComponentDetailModal({ component, onClose, onToggleCompare, isSe
                         </div>
                       )}
 
-                      {Object.keys(component.specs).length > 0 && (
+                      {displaySpecs.length > 0 && (
                         <div>
                           <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Key Specs</div>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                            {Object.entries(component.specs).slice(0, 8).map(([k, v]) => (
+                            {displaySpecs.slice(0, 8).map(([k, v]) => (
                               <div key={k} className="flex items-center justify-between bg-gray-50 border border-gray-100 rounded-xl px-3 py-2.5 hover:border-gray-200 transition-colors">
                                 <span className="text-xs text-gray-500">{formatSpecKey(k)}</span>
                                 <span className="text-xs font-bold text-gray-900">{formatSpecValue(v)}</span>
@@ -384,7 +385,7 @@ export function ComponentDetailModal({ component, onClose, onToggleCompare, isSe
                 </TabsContent>
 
                 <TabsContent value="specs" className="animate-in fade-in slide-in-from-bottom-2 duration-200 focus-visible:outline-none">
-                  {Object.keys(component.specs).length > 0 ? (
+                  {displaySpecs.length > 0 ? (
                     <div className="rounded-xl border border-gray-200 overflow-hidden shadow-sm">
                       <table className="w-full text-sm border-collapse">
                         <thead className="bg-gray-50 border-b border-gray-200">
@@ -394,7 +395,7 @@ export function ComponentDetailModal({ component, onClose, onToggleCompare, isSe
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100 bg-white">
-                          {Object.entries(component.specs).map(([k, v]) => (
+                          {displaySpecs.map(([k, v]) => (
                             <tr key={k} className="hover:bg-gray-50/60 transition-colors duration-150">
                               <td className="px-4 py-3 text-sm text-gray-600 font-medium">{formatSpecKey(k)}</td>
                               <td className="px-4 py-3 text-sm text-gray-900 font-semibold">
